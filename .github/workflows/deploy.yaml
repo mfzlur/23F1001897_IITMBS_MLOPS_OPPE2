@@ -32,7 +32,6 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v1
 
-
     # --- Train the model ---
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -72,3 +71,46 @@ jobs:
         sed -i "s/PROJECT_ID/$PROJECT_ID/g" k8s/deployment.yaml
         kubectl apply -f k8s/deployment.yaml
         kubectl rollout status deployment/heart-disease-model
+
+    # --- COMBINED: Smoke Test, Drift Check, and Stress Test ---
+    - name: Post-Deployment Verification
+      run: |-
+        # 1. Install System Tools
+        sudo apt-get update && sudo apt-get install -y wrk
+
+        # 2. Wait for LoadBalancer IP
+        echo "Waiting for External IP..."
+        SERVICE_IP=""
+        attempt_counter=0
+        max_attempts=30
+        
+        until [ -n "$SERVICE_IP" ]; do
+            if [ ${attempt_counter} -eq ${max_attempts} ];then
+              echo "Max attempts reached"
+              exit 1
+            fi
+            SERVICE_IP=$(kubectl get svc heart-disease-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ -z "$SERVICE_IP" ]; then
+                printf '.'
+                attempt_counter=$(($attempt_counter+1))
+                sleep 10
+            fi
+        done
+        echo -e "\n✅ Service IP Found: $SERVICE_IP"
+        
+        # 3. AUTOMATED DRIFT & OBSERVABILITY CHECK
+        # We assume the script has a placeholder or a previous IP. 
+        # We replace "http://.../predict" with the new Service IP dynamically.
+        echo "🧪 Running Observability & Drift Check..."
+        # This regex replaces the existing URL in your script with the dynamic CI URL
+        sed -i "s|url = \".*\"|url = \"http://$SERVICE_IP/predict\"|g" tests/monitor_drift_load.py
+        
+        # Run the script
+        python tests/monitor_drift_load.py
+
+        # 4. AUTOMATED STRESS TEST
+        echo "🚀 Starting High-Concurrency Stress Test..."
+        wrk -t12 -c2000 -d30s -s tests/post.lua "http://$SERVICE_IP/predict"
+    
+    
+   
