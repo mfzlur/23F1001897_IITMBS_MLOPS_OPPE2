@@ -26,7 +26,7 @@ def generate_random_data(n=100):
 
 def test_api_and_monitor():
     df_random = generate_random_data(100)
-    url = "http://<EXTERNAL-IP>/predict" # Replace with actual LoadBalancer IP
+    url = "http://34.143.132.204/predict" # Replace with actual LoadBalancer IP
     
     print("--- Starting Predictions (Observability) ---")
     predictions = []
@@ -47,9 +47,12 @@ def test_api_and_monitor():
     # Load reference data (saved during training)
     try:
         ref_data = pd.read_csv("reference_data.csv")
+
+        ref_chol = ref_data['chol'].dropna()
+        curr_chol = df_random['chol'].dropna()
         
         # We compare 'chol' (Cholesterol) as a sample continuous feature
-        stat, p_value = ks_2samp(ref_data['chol'], df_random['chol'])
+        stat, p_value = ks_2samp(ref_chol, curr_chol)
         
         print(f"Drift Analysis for 'chol':")
         print(f"KS Statistic: {stat:.4f}")
