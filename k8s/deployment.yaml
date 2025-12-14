@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heart-disease-model
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: heart-disease-model
+  template:
+    metadata:
+      labels:
+        app: heart-disease-model
+    spec:
+      containers:
+      - name: heart-disease-model
+        # Image will be replaced by CI/CD env vars
+        image: asia-southeast1-docker.pkg.dev/PROJECT_ID/mlops-oppe2/mlops-oppe2-final:latest
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        ports:
+        - containerPort: 8000
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: heart-disease-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: heart-disease-model
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+---
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: heart-disease-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: heart-disease-model
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 50

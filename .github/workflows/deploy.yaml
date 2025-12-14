@@ -1,0 +1,60 @@
+name: Build and Deploy to GKE
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: asia-southeast1
+  GAR_REPO: mlops-oppe2
+  CLUSTER_NAME: mlops-iitm-oppe2
+  CLUSTER_ZONE: asia-southeast1
+  IMAGE_NAME: mlops-oppe2-final
+
+jobs:
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # Authenticate to Google Cloud
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    # Setup GCloud SDK
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    # Configure Docker for Artifact Registry
+    - name: Docker configuration
+      run: |-
+        gcloud auth configure-docker $GAR_LOCATION-docker.pkg.dev
+
+    # Build and Push Docker Image
+    - name: Build and Push
+      run: |-
+        docker build -t "$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE_NAME:$GITHUB_SHA" .
+        docker push "$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE_NAME:$GITHUB_SHA"
+        docker tag "$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE_NAME:$GITHUB_SHA" "$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE_NAME:latest"
+        docker push "$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE_NAME:latest"
+
+    # Deploy to GKE
+    - name: Deploy to GKE
+      uses: google-github-actions/get-gke-credentials@v1
+      with:
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.CLUSTER_ZONE }}
+
+    - name: Apply Kubernetes Manifests
+      run: |-
+        # Replace PROJECT_ID in yaml with actual ID
+        sed -i "s/PROJECT_ID/$PROJECT_ID/g" k8s/deployment.yaml
+        kubectl apply -f k8s/deployment.yaml
+        kubectl rollout status deployment/heart-disease-model
