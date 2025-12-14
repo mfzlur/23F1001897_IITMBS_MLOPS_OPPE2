@@ -65,7 +65,7 @@ def predict(data: HealthData):
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy!! congrats your k8s is working properly"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
