@@ -32,6 +32,20 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v1
 
+
+    # --- Train the model ---
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies and Train Model
+      run: |
+        pip install -r requirements.txt
+        python src/train.py
+        # Check if files were created
+        ls -l model.joblib reference_data.csv
+
     # Configure Docker for Artifact Registry
     - name: Docker configuration
       run: |-
