@@ -1,29 +1,28 @@
 import pandas as pd
 import numpy as np
 import joblib
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, RandomizedSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import make_scorer, f1_score, precision_score, recall_score
 from fairlearn.metrics import MetricFrame, selection_rate, false_positive_rate
 
 def load_and_preprocess(filepath):
     df = pd.read_csv(filepath)
-    # Basic cleaning based on provided snippet
     df['target'] = df['target'].map({'yes': 1, 'no': 0})
     
-    # Feature Engineering / Definition
-    categorical_features = ['gender', 'cp', 'restecg', 'slope', 'thal']
-    numeric_features = ['age', 'trestbps', 'chol', 'fbs', 'thalach', 'exang', 'oldpeak', 'ca']
+    categorical_features = ['gender', 'cp', 'restecg', 'slope', 'thal', 'fbs', 'exang']
+    numeric_features = ['age', 'trestbps', 'chol', 'thalach', 'oldpeak', 'ca']
     
-    # Pipeline
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
     ])
     
+    # Handle unknown categories to prevent crashes in production
     categorical_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='most_frequent')),
         ('encoder', OneHotEncoder(handle_unknown='ignore'))
@@ -42,41 +41,68 @@ def train_and_audit():
     X = df.drop(columns=['target', 'sno'])
     y = df['target']
     
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 1. Stratified Split to maintain class ratio
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # Model Pipeline
-    clf = Pipeline(steps=[('preprocessor', preprocessor),
-                          ('classifier', RandomForestClassifier(n_estimators=100, random_state=42))])
+    # 2. Define Model with Balanced Weights
+    rf = RandomForestClassifier(random_state=42, class_weight='balanced')
     
-    clf.fit(X_train, y_train)
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', rf)])
     
-    # --- FAIRNESS AUDIT (1 Mark) ---
-    # Bucket age into 20-year bins
-    X_test['age_bucket'] = pd.cut(X_test['age'], bins=range(0, 120, 20), right=False)
+    # 3. Hyperparameter  Space
+    # We search for the optimal theta (\theta) to maximize F1-score
+    param_dist = {
+        'classifier__n_estimators': [100, 200, 300],
+        'classifier__max_depth': [None, 10, 20, 30],
+        'classifier__min_samples_split': [2, 5, 10],
+        'classifier__min_samples_leaf': [1, 2, 4]
+    }
     
-    # Compute Metrics using Fairlearn
-    y_pred = clf.predict(X_test)
+    #  search with Cross-Validation
+    search = RandomizedSearchCV(
+        pipeline, 
+        param_distributions=param_dist, 
+        n_iter=20, 
+        cv=5, 
+        scoring='f1', 
+        n_jobs=-1, 
+        random_state=42
+    )
+    
+    print("Starting Hyperparameter Tuning...")
+    search.fit(X_train, y_train)
+    best_model = search.best_estimator_
+    
+    print(f"Best Parameters: {search.best_params_}")
+    
+    # --- FAIRNESS AUDIT ---
+    sensitive_feature = X_test['age']
+    age_buckets = pd.cut(sensitive_feature, bins=range(0, 120, 20), right=False)
+    
+    y_pred = best_model.predict(X_test)
+    
+    # Metrics
     metrics = {
         'selection_rate': selection_rate,
-        'false_positive_rate': false_positive_rate
+        'fpr': false_positive_rate,
+        'precision': precision_score,
+        'recall': recall_score
     }
     
     metric_frame = MetricFrame(
         metrics=metrics,
         y_true=y_test,
         y_pred=y_pred,
-        sensitive_features=X_test['age_bucket']
+        sensitive_features=age_buckets
     )
     
-    print("### Fairness Audit Results (Age Buckets) ###")
+    print("\n### Fairness Audit Results (Age Buckets) ###")
     print(metric_frame.by_group)
     
-    # Save artifacts
-    joblib.dump(clf, 'model.joblib')
-    # Save training data for drift detection later
-    X_train.to_csv('reference_data.csv', index=False)
-    print("Model and reference data saved.")
+    # Save best model
+    joblib.dump(best_model, 'model.joblib')
+    print("model saved.")
 
 if __name__ == "__main__":
     train_and_audit()
